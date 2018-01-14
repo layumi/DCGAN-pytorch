@@ -1,4 +1,5 @@
-# DCGAN-pytorch
+# DCGAN-pytorch (LSGAN)
+The code is modified from https://github.com/pytorch/examples/tree/master/dcgan.
 
 ## Prerequisites
 
