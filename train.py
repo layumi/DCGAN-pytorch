@@ -12,7 +12,7 @@ import torchvision.datasets as dset
 import torchvision.transforms as transforms
 import torchvision.utils as vutils
 from torch.autograd import Variable
-from model import _netG, _netD
+from model import _netG, _netD, weights_init
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--dataset', required=True, help='cifar10 | lsun | imagenet | folder | lfw | fake')
@@ -26,13 +26,20 @@ parser.add_argument('--ndf', type=int, default=64)
 parser.add_argument('--niter', type=int, default=25, help='number of epochs to train for')
 parser.add_argument('--lr', type=float, default=0.0002, help='learning rate, default=0.0002')
 parser.add_argument('--beta1', type=float, default=0.5, help='beta1 for adam. default=0.5')
-parser.add_argument('--ngpu', type=int, default=1, help='number of GPUs to use')
 parser.add_argument('--netG', default='', help="path to netG (to continue training)")
 parser.add_argument('--netD', default='', help="path to netD (to continue training)")
 parser.add_argument('--name', default='baseline', help='folder to output images and model checkpoints')
 parser.add_argument('--manualSeed', type=int, help='manual seed')
+parser.add_argument('--gpu_ids', default='2', type=str, help='gpu_ids: e.g. 0 0,1,2 0,2')
 
 opt = parser.parse_args()
+str_ids = opt.gpu_ids.split(',')
+gpu_ids = []
+for str_id in str_ids:
+    id = int(str_id)
+    if id>=0:
+        gpu_ids.append(id)
+
 print(opt)
 
 try:
@@ -51,6 +58,7 @@ opt.cuda=False
 if torch.cuda.is_available():
     opt.cuda=True
     torch.cuda.manual_seed_all(opt.manualSeed)
+    torch.cuda.set_device(gpu_ids[0])
 
 cudnn.benchmark = True
 
@@ -92,7 +100,7 @@ assert dataset
 dataloader = torch.utils.data.DataLoader(dataset, batch_size=opt.batchSize,
                                          shuffle=True, num_workers=int(opt.workers))
 
-ngpu = int(opt.ngpu)
+ngpu = len(gpu_ids)
 nz = int(opt.nz)
 ngf = int(opt.ngf)
 ndf = int(opt.ndf)
