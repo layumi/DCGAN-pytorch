@@ -13,6 +13,7 @@ import torchvision.transforms as transforms
 import torchvision.utils as vutils
 from torch.autograd import Variable
 from model import _netG, _netD, weights_init
+from image_pool import ImagePool
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--dataset', required=True, help='cifar10 | lsun | imagenet | folder | lfw | fake')
@@ -23,7 +24,7 @@ parser.add_argument('--imageSize', type=int, default=64, help='the height / widt
 parser.add_argument('--nz', type=int, default=100, help='size of the latent z vector')
 parser.add_argument('--ngf', type=int, default=64)
 parser.add_argument('--ndf', type=int, default=64)
-parser.add_argument('--niter', type=int, default=25, help='number of epochs to train for')
+parser.add_argument('--niter', type=int, default=30, help='number of epochs to train for')
 parser.add_argument('--lr', type=float, default=0.0002, help='learning rate, default=0.0002')
 parser.add_argument('--beta1', type=float, default=0.5, help='beta1 for adam. default=0.5')
 parser.add_argument('--netG', default='', help="path to netG (to continue training)")
@@ -31,6 +32,8 @@ parser.add_argument('--netD', default='', help="path to netD (to continue traini
 parser.add_argument('--name', default='baseline', help='folder to output images and model checkpoints')
 parser.add_argument('--manualSeed', type=int, help='manual seed')
 parser.add_argument('--gpu_ids', default='2', type=str, help='gpu_ids: e.g. 0 0,1,2 0,2')
+parser.add_argument('--lsgan', action='store_true', help='use lsgan')
+parser.add_argument('--instance', action='store_true', help='use instance norm')
 
 opt = parser.parse_args()
 str_ids = opt.gpu_ids.split(',')
@@ -107,23 +110,56 @@ ndf = int(opt.ndf)
 nc = 3
 
 #-------Initial Model ----------
-netG = _netG(ngpu)
-netG.apply(weights_init)
+
+if opt.instance:
+    netG = _netG(ngpu, norm_layer=nn.InstanceNorm2d)
+    netG.apply(weights_init)
 if opt.netG != '':
     netG.load_state_dict(torch.load(opt.netG))
 print(netG)
 
-netD = _netD(ngpu)
-netD.apply(weights_init)
+if opt.instance:
+    netD = _netD(ngpu, use_sigmoid=(not opt.lsgan), norm_layer=nn.InstanceNorm2d)
+    netD.apply(weights_init)
 if opt.netD != '':
     netD.load_state_dict(torch.load(opt.netD))
 print(netD)
 
-criterion = nn.BCELoss()
+#----------Loss-----------
+class GANLoss(nn.Module):
+    def __init__(self, use_lsgan=False, target_real_label=1.0, target_fake_label=0.0, tensor=torch.FloatTensor):
+        super(GANLoss, self).__init__()
+        self.real_label = target_real_label
+        self.fake_label = target_fake_label
+        self.real_label_var = None
+        self.fake_label_var = None
+        self.Tensor = tensor
+        if use_lsgan:
+            self.loss = nn.MSELoss()
+        else:
+            self.loss = nn.BCELoss()
 
+    def get_target_tensor(self, input, target_is_real):
+        target_tensor = None
+        if target_is_real:
+            real_tensor = self.Tensor(input.size()).fill_(self.real_label)
+            self.real_label_var = Variable(real_tensor, requires_grad=False)
+            target_tensor = self.real_label_var
+        else:
+            fake_tensor = self.Tensor(input.size()).fill_(self.fake_label)
+            self.fake_label_var = Variable(fake_tensor, requires_grad=False)
+            target_tensor = self.fake_label_var
+        return target_tensor
+
+    def __call__(self, input, target_is_real):
+        target_tensor = self.get_target_tensor(input, target_is_real)
+        return self.loss(input, target_tensor)
+
+
+criterion = GANLoss(use_lsgan=opt.lsgan, tensor=torch.cuda.FloatTensor)
 input = torch.FloatTensor(opt.batchSize, 3, opt.imageSize, opt.imageSize)
 noise = torch.FloatTensor(opt.batchSize, nz, 1, 1)
-fixed_noise = torch.FloatTensor(opt.batchSize, nz, 1, 1).normal_(0, 1)
+fixed_noise = torch.FloatTensor(64, nz, 1, 1).normal_(0, 1)
 label = torch.FloatTensor(opt.batchSize)
 real_label = 1
 fake_label = 0
@@ -141,6 +177,8 @@ fixed_noise = Variable(fixed_noise)
 optimizerD = optim.Adam(netD.parameters(), lr=opt.lr, betas=(opt.beta1, 0.999))
 optimizerG = optim.Adam(netG.parameters(), lr=opt.lr, betas=(opt.beta1, 0.999))
 
+fake_pool = ImagePool(100)
+
 for epoch in range(opt.niter):
     for i, data in enumerate(dataloader, 0):
         ############################
@@ -153,12 +191,10 @@ for epoch in range(opt.niter):
         if opt.cuda:
             real_cpu = real_cpu.cuda()
         input.resize_as_(real_cpu).copy_(real_cpu)
-        label.resize_(batch_size).fill_(real_label)
         inputv = Variable(input)
-        labelv = Variable(label)
 
         output = netD(inputv)
-        errD_real = criterion(output, labelv)
+        errD_real = criterion(output, True)
         errD_real.backward()
         D_x = output.data.mean()
 
@@ -166,9 +202,9 @@ for epoch in range(opt.niter):
         noise.resize_(batch_size, nz, 1, 1).normal_(0, 1)
         noisev = Variable(noise)
         fake = netG(noisev)
-        labelv = Variable(label.fill_(fake_label))
-        output = netD(fake.detach())
-        errD_fake = criterion(output, labelv)
+        fake_re = fake_pool.query(fake.data)  #For D, we use a replay policy
+        output = netD(fake_re.detach())
+        errD_fake = criterion(output, False)
         errD_fake.backward()
         D_G_z1 = output.data.mean()
         errD = errD_real + errD_fake
@@ -178,9 +214,8 @@ for epoch in range(opt.niter):
         # (2) Update G network: maximize log(D(G(z)))
         ###########################
         netG.zero_grad()
-        labelv = Variable(label.fill_(real_label))  # fake labels are real for generator cost
         output = netD(fake)
-        errG = criterion(output, labelv)
+        errG = criterion(output, True)
         errG.backward()
         D_G_z2 = output.data.mean()
         optimizerG.step()
