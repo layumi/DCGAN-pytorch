@@ -35,6 +35,7 @@ parser.add_argument('--manualSeed', type=int, help='manual seed')
 parser.add_argument('--gpu_ids', default='2', type=str, help='gpu_ids: e.g. 0 0,1,2 0,2')
 parser.add_argument('--lsgan', action='store_true', help='use lsgan')
 parser.add_argument('--instance', action='store_true', help='use instance norm')
+parser.add_argument('--withoutE', action='store_true', help='do not use Encoder Network')
 
 opt = parser.parse_args()
 str_ids = opt.gpu_ids.split(',')
@@ -136,13 +137,14 @@ if opt.netD != '':
 print(netD)
 
 #---------E--------------
-if opt.instance:
-    netE = _netE(ngpu, use_sigmoid=(not opt.lsgan), norm_layer=nn.InstanceNorm2d)
-    netE.apply(weights_init)
-else:
-    netE = _netE(ngpu, use_sigmoid=(not opt.lsgan))
-    netE.apply(weights_init)
-print(netE)
+if not opt.withoutE:
+    if opt.instance:
+        netE = _netE(ngpu, use_sigmoid=(not opt.lsgan), norm_layer=nn.InstanceNorm2d)
+        netE.apply(weights_init)
+    else:
+        netE = _netE(ngpu, use_sigmoid=(not opt.lsgan))
+        netE.apply(weights_init)
+    print(netE)
 
 #----------Loss-----------
 class GANLoss(nn.Module):
@@ -187,7 +189,8 @@ fake_label = 0
 if opt.cuda:
     netD.cuda()
     netG.cuda()
-    netE.cuda()
+    if not opt.withoutE:
+        netE.cuda()
     criterion.cuda()
     criterionL1.cuda()
     input, label = input.cuda(), label.cuda()
@@ -198,14 +201,16 @@ fixed_noise = Variable(fixed_noise)
 # setup optimizer
 optimizerD = optim.Adam(netD.parameters(), lr=opt.lr, betas=(opt.beta1, 0.999))
 optimizerG = optim.Adam(netG.parameters(), lr=opt.lr, betas=(opt.beta1, 0.999))
-optimizerE = optim.Adam(netE.parameters(), lr=opt.lr, betas=(opt.beta1, 0.999))
+if not opt.withoutE:
+    optimizerE = optim.Adam(netE.parameters(), lr=opt.lr, betas=(opt.beta1, 0.999))
 
 fake_pool = ImagePool(50)
 
 schedulers = []
 schedulers.append(lr_scheduler.StepLR(optimizerD, step_size=40, gamma=0.1))
 schedulers.append(lr_scheduler.StepLR(optimizerG, step_size=40, gamma=0.1))
-schedulers.append(lr_scheduler.StepLR(optimizerE, step_size=40, gamma=0.1))
+if not opt.withoutE:
+    schedulers.append(lr_scheduler.StepLR(optimizerE, step_size=40, gamma=0.1))
 
 for epoch in range(opt.niter):
     for i, data in enumerate(dataloader, 0):
@@ -243,23 +248,32 @@ for epoch in range(opt.niter):
         ###########################
         netG.zero_grad()
         output = netD(fake)
-        embedding = netE(fake)
-        errG = criterion(output, True) + criterionL1(embedding, noisev)
+        if not opt.withoutE:
+            embedding = netE(fake)
+            errG = criterion(output, True) + criterionL1(embedding, noisev)
+        else:
+            errG = criterion(output, True)
         errG.backward()
         D_G_z2 = output.data.mean()
         optimizerG.step()
         
         ###########################
         # (3) Update E
-        netE.zero_grad()
-        embedding = netE(fake.detach())
-        errE = criterionL1(embedding, noisev)
-        errE.backward()
-        optimizerE.step()
-
-        print('[%d/%d][%d/%d] Loss_D: %.4f Loss_G: %.4f  Loss_E: %.4f D(x): %.4f D(G(z)): %.4f / %.4f'
+        if not opt.withoutE:
+            netE.zero_grad()
+            embedding = netE(fake.detach())
+            errE = criterionL1(embedding, noisev)
+            errE.backward()
+            optimizerE.step()
+            print('[%d/%d][%d/%d] Loss_D: %.4f Loss_G: %.4f  Loss_E: %.4f D(x): %.4f D(G(z)): %.4f / %.4f'
               % (epoch, opt.niter, i, len(dataloader),
                  errD.data[0], errG.data[0], errE.data[0], D_x, D_G_z1, D_G_z2))
+        else:
+            print('[%d/%d][%d/%d] Loss_D: %.4f Loss_G: %.4f  D(x): %.4f D(G(z)): %.4f / %.4f'
+                    % (epoch, opt.niter, i, len(dataloader),
+                    errD.data[0], errG.data[0], D_x, D_G_z1, D_G_z2))
+        ###########################
+        # visualize model
         if i % 100 == 0:
             vutils.save_image(real_cpu,
                     './visual/%s/real_samples.png' % opt.name,
@@ -272,7 +286,8 @@ for epoch in range(opt.niter):
     # do checkpointing
     torch.save(netG.state_dict(), './model/%s/netG_epoch_%d.pth' % (opt.name, epoch))
     torch.save(netD.state_dict(), './model/%s/netD_epoch_%d.pth' % (opt.name, epoch))
-    torch.save(netE.state_dict(), './model/%s/netE_epoch_%d.pth' % (opt.name, epoch))
+    if not opt.withoutE:
+        torch.save(netE.state_dict(), './model/%s/netE_epoch_%d.pth' % (opt.name, epoch))
 
     #step lrRate
     for scheduler in  schedulers:
