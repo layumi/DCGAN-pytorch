@@ -27,9 +27,24 @@ mkdir result
 
 ### Train
 ```
-python main.py --dataset market --dataroot /home/zzd/market1501/train_pytorch  --name baseline
+python train.py --dataset market --dataroot /home/zzd/market1501/train_pytorch  --name baseline-lsgan8x8-encode --lsgan --gpu_ids 3
 ```
 
+`--name` the name of the output model
+
+`--lsgan` mean using MSELoss(L2Loss)
+
+`--gpu_ids` select which gpu to run
+
+`--batchSize` default 64
+
+by default, batch norm is used. Conv layers have no bias.
+
+`--instance` to use instance norm.  Conv layers also learn bias.
+
+`--withoutE` to remove Encoder Network. The code will run as the basic LSGAN.
+
+Now I set step learning rate schedule. The learning rate drop 0.1 at 40th epoch.
 
 ### Test(Generate Images)
 ```
