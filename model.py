@@ -113,3 +113,44 @@ class _netD(nn.Module):
 
         return output.view(-1, 1).squeeze(1)
 
+
+class _netE(nn.Module):
+    def __init__(self, ngpu=1, use_sigmoid=True, norm_layer=nn.BatchNorm2d):
+        super(_netE, self).__init__()
+        self.ngpu = ngpu
+        if type(norm_layer) == functools.partial:
+            use_bias = norm_layer.func==nn.InstanceNorm2d
+        else:
+            use_bias = norm_layer==nn.InstanceNorm2d
+        sequence = [
+            # input is (nc) x 64 x 64
+            nn.Conv2d(nc, ndf, kernel_size=4, stride=2, padding=1, bias=use_bias),
+            nn.LeakyReLU(0.2, inplace=True),
+            # state size. (ndf) x 32 x 32
+            nn.Conv2d(ndf, ndf * 2, kernel_size=4, stride=2, padding=1, bias=use_bias),
+            norm_layer(ndf * 2),
+            nn.LeakyReLU(0.2, inplace=True),
+            # state size. (ndf*2) x 16 x 16
+            nn.Conv2d(ndf * 2, ndf * 4, kernel_size=4, stride=2, padding=1, bias=use_bias),
+            norm_layer(ndf * 4),
+            nn.LeakyReLU(0.2, inplace=True),
+            # state size. (ndf*4) x 8 x 8
+            nn.Conv2d(ndf * 4, ndf * 8, kernel_size=4, stride=2, padding=1, bias=use_bias),
+            nn.BatchNorm2d(ndf * 8),
+            nn.LeakyReLU(0.2, inplace=True),
+            # state size. (ndf*8) x 4 x 4
+            nn.Conv2d(ndf * 8, 100, kernel_size=4, stride=1, padding=0, bias=use_bias),
+            #nn.Sigmoid()
+        ]
+        if use_sigmoid:
+            sequence += [nn.Sigmoid()]
+        self.main = nn.Sequential(*sequence)
+
+    def forward(self, input):
+        if isinstance(input.data, torch.cuda.FloatTensor) and self.ngpu > 1:
+            output = nn.parallel.data_parallel(self.main, input, range(self.ngpu))
+        else:
+            output = self.main(input)
+
+        return output.view(-1, 1).squeeze(1)
+        

@@ -12,8 +12,9 @@ import torchvision.datasets as dset
 import torchvision.transforms as transforms
 import torchvision.utils as vutils
 from torch.autograd import Variable
-from model import _netG, _netD, weights_init
+from model import _netG, _netD, _netE, weights_init
 from image_pool import ImagePool
+from torch.optim import lr_scheduler
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--dataset', required=True, help='cifar10 | lsun | imagenet | folder | lfw | fake')
@@ -24,7 +25,7 @@ parser.add_argument('--imageSize', type=int, default=64, help='the height / widt
 parser.add_argument('--nz', type=int, default=100, help='size of the latent z vector')
 parser.add_argument('--ngf', type=int, default=64)
 parser.add_argument('--ndf', type=int, default=64)
-parser.add_argument('--niter', type=int, default=30, help='number of epochs to train for')
+parser.add_argument('--niter', type=int, default=60, help='number of epochs to train for')
 parser.add_argument('--lr', type=float, default=0.0002, help='learning rate, default=0.0002')
 parser.add_argument('--beta1', type=float, default=0.5, help='beta1 for adam. default=0.5')
 parser.add_argument('--netG', default='', help="path to netG (to continue training)")
@@ -110,20 +111,38 @@ ndf = int(opt.ndf)
 nc = 3
 
 #-------Initial Model ----------
-
+#--------E-----------
 if opt.instance:
     netG = _netG(ngpu, norm_layer=nn.InstanceNorm2d)
     netG.apply(weights_init)
+else:
+    netG = _netG(ngpu)
+    netG.apply(weights_init)
+
 if opt.netG != '':
     netG.load_state_dict(torch.load(opt.netG))
 print(netG)
 
+#---------D------------
 if opt.instance:
     netD = _netD(ngpu, use_sigmoid=(not opt.lsgan), norm_layer=nn.InstanceNorm2d)
     netD.apply(weights_init)
+else:
+    netD = _netD(ngpu, use_sigmoid=(not opt.lsgan))
+    netD.apply(weights_init)
+
 if opt.netD != '':
     netD.load_state_dict(torch.load(opt.netD))
 print(netD)
+
+#---------E--------------
+if opt.instance:
+    netE = _netE(ngpu, use_sigmoid=(not opt.lsgan), norm_layer=nn.InstanceNorm2d)
+    netE.apply(weights_init)
+else:
+    netE = _netE(ngpu, use_sigmoid=(not opt.lsgan))
+    netE.apply(weights_init)
+print(netE)
 
 #----------Loss-----------
 class GANLoss(nn.Module):
@@ -157,6 +176,7 @@ class GANLoss(nn.Module):
 
 
 criterion = GANLoss(use_lsgan=opt.lsgan, tensor=torch.cuda.FloatTensor)
+criterionL1 = nn.L1Loss()
 input = torch.FloatTensor(opt.batchSize, 3, opt.imageSize, opt.imageSize)
 noise = torch.FloatTensor(opt.batchSize, nz, 1, 1)
 fixed_noise = torch.FloatTensor(64, nz, 1, 1).normal_(0, 1)
@@ -167,7 +187,9 @@ fake_label = 0
 if opt.cuda:
     netD.cuda()
     netG.cuda()
+    netE.cuda()
     criterion.cuda()
+    criterionL1.cuda()
     input, label = input.cuda(), label.cuda()
     noise, fixed_noise = noise.cuda(), fixed_noise.cuda()
 
@@ -176,8 +198,14 @@ fixed_noise = Variable(fixed_noise)
 # setup optimizer
 optimizerD = optim.Adam(netD.parameters(), lr=opt.lr, betas=(opt.beta1, 0.999))
 optimizerG = optim.Adam(netG.parameters(), lr=opt.lr, betas=(opt.beta1, 0.999))
+optimizerE = optim.Adam(netE.parameters(), lr=opt.lr, betas=(opt.beta1, 0.999))
 
-fake_pool = ImagePool(100)
+fake_pool = ImagePool(50)
+
+schedulers = []
+schedulers.append(lr_scheduler.StepLR(optimizerD, step_size=40, gamma=0.1))
+schedulers.append(lr_scheduler.StepLR(optimizerG, step_size=40, gamma=0.1))
+schedulers.append(lr_scheduler.StepLR(optimizerE, step_size=40, gamma=0.1))
 
 for epoch in range(opt.niter):
     for i, data in enumerate(dataloader, 0):
@@ -202,8 +230,8 @@ for epoch in range(opt.niter):
         noise.resize_(batch_size, nz, 1, 1).normal_(0, 1)
         noisev = Variable(noise)
         fake = netG(noisev)
-        fake_re = fake_pool.query(fake.data)  #For D, we use a replay policy
-        output = netD(fake_re.detach())
+        #fake_re = fake_pool.query(fake.data)  #For D, we use a replay policy
+        output = netD(fake.detach())
         errD_fake = criterion(output, False)
         errD_fake.backward()
         D_G_z1 = output.data.mean()
@@ -215,14 +243,23 @@ for epoch in range(opt.niter):
         ###########################
         netG.zero_grad()
         output = netD(fake)
-        errG = criterion(output, True)
+        embedding = netE(fake)
+        errG = criterion(output, True) + criterionL1(embedding, noisev)
         errG.backward()
         D_G_z2 = output.data.mean()
         optimizerG.step()
+        
+        ###########################
+        # (3) Update E
+        netE.zero_grad()
+        embedding = netE(fake.detach())
+        errE = criterionL1(embedding, noisev)
+        errE.backward()
+        optimizerE.step()
 
-        print('[%d/%d][%d/%d] Loss_D: %.4f Loss_G: %.4f D(x): %.4f D(G(z)): %.4f / %.4f'
+        print('[%d/%d][%d/%d] Loss_D: %.4f Loss_G: %.4f  Loss_E: %.4f D(x): %.4f D(G(z)): %.4f / %.4f'
               % (epoch, opt.niter, i, len(dataloader),
-                 errD.data[0], errG.data[0], D_x, D_G_z1, D_G_z2))
+                 errD.data[0], errG.data[0], errE.data[0], D_x, D_G_z1, D_G_z2))
         if i % 100 == 0:
             vutils.save_image(real_cpu,
                     './visual/%s/real_samples.png' % opt.name,
@@ -235,4 +272,8 @@ for epoch in range(opt.niter):
     # do checkpointing
     torch.save(netG.state_dict(), './model/%s/netG_epoch_%d.pth' % (opt.name, epoch))
     torch.save(netD.state_dict(), './model/%s/netD_epoch_%d.pth' % (opt.name, epoch))
+    torch.save(netE.state_dict(), './model/%s/netE_epoch_%d.pth' % (opt.name, epoch))
 
+    #step lrRate
+    for scheduler in  schedulers:
+        scheduler.step()
