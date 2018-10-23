@@ -40,27 +40,33 @@ class _netG(nn.Module):
         use_bias = norm_layer==nn.InstanceNorm2d
         self.main = nn.Sequential(
             # input is Z, going into a convolution
-            nn.ConvTranspose2d(     nz, ngf * 8, 4, 1, 0, bias=use_bias),
+            nn.ConvTranspose2d( nz, ngf * 8, (4,2), 1, 0, bias=use_bias),
             norm_layer(ngf * 8),
-            nn.ReLU(True),
-            # state size. (ngf*8) x 4 x 4
+            nn.LeakyReLU(0.2, inplace=True),
+            # state size. (ngf*8) x 4 x 2
             nn.ConvTranspose2d(ngf * 8, ngf * 4, 4, 2, 1, bias=use_bias),
             norm_layer(ngf * 4),
-            nn.ReLU(True),
-            # state size. (ngf*4) x 8 x 8
+            nn.LeakyReLU(0.2, inplace=True),
+            # state size. (ngf*4) x 8 x 4
             nn.ConvTranspose2d(ngf * 4, ngf * 2, 4, 2, 1, bias=use_bias),
             norm_layer(ngf * 2),
-            nn.ReLU(True),
-            # state size. (ngf*2) x 16 x 16
+            nn.LeakyReLU(0.2, inplace=True),
+            # state size. (ngf*2) x 16 x 8
             nn.ConvTranspose2d(ngf * 2,     ngf, 4, 2, 1, bias=use_bias),
             norm_layer(ngf),
-            nn.ReLU(True),
-            # state size. (ngf) x 32 x 32
+            nn.LeakyReLU(0.2, inplace=True),
+            # state size. (ngf) x 32 x 16
             nn.ConvTranspose2d(    ngf,      ngf, 4, 2, 1, bias=use_bias),
             norm_layer(ngf),
-            nn.ReLU(True),
-            nn.ReflectionPad2d(3),
-            nn.Conv2d(ngf, nc, kernel_size=7, padding=0, bias=use_bias),
+            nn.LeakyReLU(0.2, inplace=True),
+
+            # state size. (ngf) x 64 x 32
+            nn.ConvTranspose2d(    ngf,      ngf, 4, 2, 1, bias=use_bias),
+            norm_layer(ngf),
+            nn.LeakyReLU(0.2, inplace=True),
+
+            nn.ReflectionPad2d(1),
+            nn.Conv2d(ngf, nc, kernel_size=3, padding=0, bias=use_bias),
             nn.Tanh()
             # state size. (nc) x 64 x 64
         )

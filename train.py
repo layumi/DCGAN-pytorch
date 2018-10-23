@@ -26,8 +26,8 @@ parser.add_argument('--nz', type=int, default=100, help='size of the latent z ve
 parser.add_argument('--ngf', type=int, default=64)
 parser.add_argument('--ndf', type=int, default=64)
 parser.add_argument('--niter', type=int, default=60, help='number of epochs to train for')
-parser.add_argument('--lr', type=float, default=0.0002, help='learning rate, default=0.0002')
-parser.add_argument('--beta1', type=float, default=0.5, help='beta1 for adam. default=0.5')
+parser.add_argument('--lr', type=float, default=0.0001, help='learning rate, default=0.0002')
+parser.add_argument('--beta1', type=float, default=0, help='beta1 for adam. default=0.5')
 parser.add_argument('--netG', default='', help="path to netG (to continue training)")
 parser.add_argument('--netD', default='', help="path to netD (to continue training)")
 parser.add_argument('--name', default='baseline', help='folder to output images and model checkpoints')
@@ -78,7 +78,7 @@ if opt.dataset in ['imagenet', 'folder', 'lfw']:
 elif opt.dataset == 'market':
     dataset = dset.ImageFolder(root=opt.dataroot,
                                transform=transforms.Compose([
-                                   transforms.Resize((opt.imageSize,opt.imageSize)),
+                                   transforms.Resize((opt.imageSize)),
                                    #transforms.CenterCrop(opt.imageSize),
                                    transforms.ToTensor(),
                                    transforms.Normalize((0.5, 0.5, 0.5), (0.5,0.5,0.5)),
@@ -179,7 +179,7 @@ class GANLoss(nn.Module):
 
 criterion = GANLoss(use_lsgan=opt.lsgan, tensor=torch.cuda.FloatTensor)
 criterionL1 = nn.L1Loss()
-input = torch.FloatTensor(opt.batchSize, 3, opt.imageSize, opt.imageSize)
+input = torch.FloatTensor(opt.batchSize, 3, opt.imageSize*2, opt.imageSize)
 noise = torch.FloatTensor(opt.batchSize, nz, 1, 1)
 fixed_noise = torch.FloatTensor(64, nz, 1, 1).normal_(0, 1)
 label = torch.FloatTensor(opt.batchSize)
@@ -199,7 +199,7 @@ if opt.cuda:
 fixed_noise = Variable(fixed_noise)
 
 # setup optimizer
-optimizerD = optim.Adam(netD.parameters(), lr=opt.lr, betas=(opt.beta1, 0.999))
+optimizerD = optim.Adam(netD.parameters(), lr=2*opt.lr, betas=(opt.beta1, 0.999))
 optimizerG = optim.Adam(netG.parameters(), lr=opt.lr, betas=(opt.beta1, 0.999))
 if not opt.withoutE:
     optimizerE = optim.Adam(netE.parameters(), lr=opt.lr, betas=(opt.beta1, 0.999))
@@ -235,6 +235,7 @@ for epoch in range(opt.niter):
         noise.resize_(batch_size, nz, 1, 1).normal_(0, 1)
         noisev = Variable(noise)
         fake = netG(noisev)
+        print(fake.shape)
         #fake_re = fake_pool.query(fake.data)  #For D, we use a replay policy
         output = netD(fake.detach())
         errD_fake = criterion(output, False)
