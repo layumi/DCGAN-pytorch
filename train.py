@@ -155,6 +155,7 @@ class GANLoss(nn.Module):
         self.real_label_var = None
         self.fake_label_var = None
         self.Tensor = tensor
+        self.lamb = 0.0001
         if use_lsgan:
             self.loss = nn.MSELoss()
         else:
@@ -172,16 +173,34 @@ class GANLoss(nn.Module):
             target_tensor = self.fake_label_var
         return target_tensor
 
-    def __call__(self, input, target_is_real):
-        target_tensor = self.get_target_tensor(input, target_is_real)
-        return self.loss(input, target_tensor)
+    def __call__(self, input, output, target_is_real, is_real=False):
+        target_tensor = self.get_target_tensor(output, target_is_real)
+        loss =  self.loss(output, target_tensor)
+        if is_real:
+            reg = self.lamb *self.compute_grad2(output, input).mean()
+        else:
+            reg = 0
+        loss += reg
+        return loss
+
+    def compute_grad2(self, d_out, x_in):
+        batch_size = x_in.size(0)
+        grad_dout = torch.autograd.grad(
+            outputs=d_out.sum(), inputs=x_in,
+            create_graph=True, retain_graph=True, only_inputs=True
+        )[0]
+        grad_dout2 = grad_dout.pow(2)
+        assert(grad_dout2.size() == x_in.size())
+        reg = grad_dout2.view(batch_size, -1).sum(1)
+        return reg
 
 
 criterion = GANLoss(use_lsgan=opt.lsgan, tensor=torch.cuda.FloatTensor)
 criterionL1 = nn.L1Loss()
 input = torch.FloatTensor(opt.batchSize, 3, opt.imageSize*2, opt.imageSize)
 noise = torch.FloatTensor(opt.batchSize, nz, 1, 1)
-fixed_noise = torch.FloatTensor(64, nz, 1, 1).normal_(0, 1)
+fixed_noise = torch.FloatTensor(64, nz, 1, 1).normal_(0, 1) 
+
 label = torch.FloatTensor(opt.batchSize)
 real_label = 1
 fake_label = 0
@@ -207,10 +226,10 @@ if not opt.withoutE:
 fake_pool = ImagePool(50)
 
 schedulers = []
-schedulers.append(lr_scheduler.StepLR(optimizerD, step_size=40, gamma=0.1))
-schedulers.append(lr_scheduler.StepLR(optimizerG, step_size=40, gamma=0.1))
+schedulers.append(lr_scheduler.StepLR(optimizerD, step_size=20, gamma=0.5))
+schedulers.append(lr_scheduler.StepLR(optimizerG, step_size=20, gamma=0.5))
 if not opt.withoutE:
-    schedulers.append(lr_scheduler.StepLR(optimizerE, step_size=40, gamma=0.1))
+    schedulers.append(lr_scheduler.StepLR(optimizerE, step_size=20, gamma=0.5))
 
 for epoch in range(opt.niter):
     for i, data in enumerate(dataloader, 0):
@@ -225,9 +244,9 @@ for epoch in range(opt.niter):
             real_cpu = real_cpu.cuda()
         input.resize_as_(real_cpu).copy_(real_cpu)
         inputv = Variable(input)
-
+        inputv.requires_grad_()  # for regularization
         output = netD(inputv)
-        errD_real = criterion(output, True)
+        errD_real = criterion(inputv, output, True, is_real=True)
         errD_real.backward()
         D_x = output.data.mean()
 
@@ -238,7 +257,7 @@ for epoch in range(opt.niter):
         print(fake.shape)
         #fake_re = fake_pool.query(fake.data)  #For D, we use a replay policy
         output = netD(fake.detach())
-        errD_fake = criterion(output, False)
+        errD_fake = criterion(fake.detach(), output, False)
         errD_fake.backward()
         D_G_z1 = output.data.mean()
         errD = errD_real + errD_fake
@@ -251,9 +270,9 @@ for epoch in range(opt.niter):
         output = netD(fake)
         if not opt.withoutE:
             embedding = netE(fake)
-            errG = criterion(output, True) + criterionL1(embedding, noisev)
+            errG = criterion(fake, output, True) + criterionL1(embedding, noisev)
         else:
-            errG = criterion(output, True)
+            errG = criterion(fake, output, True)
         errG.backward()
         D_G_z2 = output.data.mean()
         optimizerG.step()
@@ -273,23 +292,22 @@ for epoch in range(opt.niter):
             print('[%d/%d][%d/%d] Loss_D: %.4f Loss_G: %.4f  D(x): %.4f D(G(z)): %.4f / %.4f'
                     % (epoch, opt.niter, i, len(dataloader),
                     errD.data[0], errG.data[0], D_x, D_G_z1, D_G_z2))
-        ###########################
-        # visualize model
-        if i % 100 == 0:
-            vutils.save_image(real_cpu,
+    ###########################
+    # visualize model
+    vutils.save_image(real_cpu,
                     './visual/%s/real_samples.png' % opt.name,
                     normalize=True)
-            fake = netG(fixed_noise)
-            vutils.save_image(fake.data,
+    fake = netG(fixed_noise)
+    vutils.save_image(fake.data,
                     './visual/%s/fake_samples_epoch_%03d.png' % (opt.name, epoch),
                     normalize=True)
 
     # do checkpointing
-    torch.save(netG.state_dict(), './model/%s/netG_epoch_%d.pth' % (opt.name, epoch))
-    torch.save(netD.state_dict(), './model/%s/netD_epoch_%d.pth' % (opt.name, epoch))
-    if not opt.withoutE:
-        torch.save(netE.state_dict(), './model/%s/netE_epoch_%d.pth' % (opt.name, epoch))
-
+    if epoch%10 == 0:
+        torch.save(netG.state_dict(), './model/%s/netG_epoch_%d.pth' % (opt.name, epoch))
+        torch.save(netD.state_dict(), './model/%s/netD_epoch_%d.pth' % (opt.name, epoch))
+        if not opt.withoutE:
+            torch.save(netE.state_dict(), './model/%s/netE_epoch_%d.pth' % (opt.name, epoch))
     #step lrRate
     for scheduler in  schedulers:
         scheduler.step()
