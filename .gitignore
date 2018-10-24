@@ -31,3 +31,7 @@ __pycache__/
 *.npy
 *.pt
 *.pth
+
+
+baseline.json
+submit_job_baseline.py

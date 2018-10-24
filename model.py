@@ -41,7 +41,7 @@ class ResnetBlock(nn.Module):
     def forward(self, x):
         dx = self.conv_1(x)
         dx = self.conv_2(dx)
-        out = x + dx
+        out = x + 0.1*dx
         return out
 
 class _netG(nn.Module):

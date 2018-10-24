@@ -20,19 +20,19 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--dataset', required=True, help='cifar10 | lsun | imagenet | folder | lfw | fake')
 parser.add_argument('--dataroot', required=True, help='path to dataset')
 parser.add_argument('--workers', type=int, default=8, help='number of data loading workers')
-parser.add_argument('--batchSize', type=int, default=64, help='input batch size')
+parser.add_argument('--batchSize', type=int, default=128, help='input batch size')
 parser.add_argument('--imageSize', type=int, default=64, help='the height / width of the input image to network')
 parser.add_argument('--nz', type=int, default=100, help='size of the latent z vector')
 parser.add_argument('--ngf', type=int, default=64)
 parser.add_argument('--ndf', type=int, default=64)
-parser.add_argument('--niter', type=int, default=60, help='number of epochs to train for')
-parser.add_argument('--lr', type=float, default=0.0001, help='learning rate, default=0.0002')
+parser.add_argument('--niter', type=int, default=100, help='number of epochs to train for')
+parser.add_argument('--lr', type=float, default=0.0003, help='learning rate, default=0.0002')
 parser.add_argument('--beta1', type=float, default=0, help='beta1 for adam. default=0.5')
 parser.add_argument('--netG', default='', help="path to netG (to continue training)")
 parser.add_argument('--netD', default='', help="path to netD (to continue training)")
 parser.add_argument('--name', default='baseline', help='folder to output images and model checkpoints')
 parser.add_argument('--manualSeed', type=int, help='manual seed')
-parser.add_argument('--gpu_ids', default='2', type=str, help='gpu_ids: e.g. 0 0,1,2 0,2')
+parser.add_argument('--gpu_ids', default='0', type=str, help='gpu_ids: e.g. 0 0,1,2 0,2')
 parser.add_argument('--lsgan', action='store_true', help='use lsgan')
 parser.add_argument('--instance', action='store_true', help='use instance norm')
 parser.add_argument('--withoutE', action='store_true', help='do not use Encoder Network')
@@ -199,7 +199,14 @@ criterion = GANLoss(use_lsgan=opt.lsgan, tensor=torch.cuda.FloatTensor)
 criterionL1 = nn.L1Loss()
 input = torch.FloatTensor(opt.batchSize, 3, opt.imageSize*2, opt.imageSize)
 noise = torch.FloatTensor(opt.batchSize, nz, 1, 1)
-fixed_noise = torch.FloatTensor(64, nz, 1, 1).normal_(0, 1) 
+# truncation
+fixed_noise = torch.FloatTensor(64*nz).normal_(0, 1) 
+for i in range(len(fixed_noise)):
+     v = fixed_noise[i]
+     while abs(v)>2:
+         v= torch.randn(1)
+     fixed_noise[i] = v
+fixed_noise = fixed_noise.resize_( (64, nz, 1, 1))
 
 label = torch.FloatTensor(opt.batchSize)
 real_label = 1
@@ -226,10 +233,10 @@ if not opt.withoutE:
 fake_pool = ImagePool(50)
 
 schedulers = []
-schedulers.append(lr_scheduler.StepLR(optimizerD, step_size=20, gamma=0.5))
-schedulers.append(lr_scheduler.StepLR(optimizerG, step_size=20, gamma=0.5))
+schedulers.append(lr_scheduler.StepLR(optimizerD, step_size=40, gamma=0.5))
+schedulers.append(lr_scheduler.StepLR(optimizerG, step_size=40, gamma=0.5))
 if not opt.withoutE:
-    schedulers.append(lr_scheduler.StepLR(optimizerE, step_size=20, gamma=0.5))
+    schedulers.append(lr_scheduler.StepLR(optimizerE, step_size=40, gamma=0.5))
 
 for epoch in range(opt.niter):
     for i, data in enumerate(dataloader, 0):
@@ -254,7 +261,7 @@ for epoch in range(opt.niter):
         noise.resize_(batch_size, nz, 1, 1).normal_(0, 1)
         noisev = Variable(noise)
         fake = netG(noisev)
-        print(fake.shape)
+        #print(fake.shape)
         #fake_re = fake_pool.query(fake.data)  #For D, we use a replay policy
         output = netD(fake.detach())
         errD_fake = criterion(fake.detach(), output, False)

@@ -7,10 +7,10 @@ from torch.autograd import Variable
 from model import _netG
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--name', default='baseline', type=str, help='trained model name')
-parser.add_argument('--which_epoch', default='24', type=str, help='0,1,2,3,4...')
+parser.add_argument('--name', default='DCGAN-b128-lr0.0003', type=str, help='trained model name')
+parser.add_argument('--which_epoch', default='80', type=str, help='0,1,2,3,4...')
 parser.add_argument('--batchsize', default=64, type=int, help='batchsize')
-parser.add_argument('--gpu_ids',default='2', type=str,help='gpu_ids: e.g. 0  0,1,2  0,2')
+parser.add_argument('--gpu_ids',default='0', type=str,help='gpu_ids: e.g. 0  0,1,2  0,2')
 
 opt = parser.parse_args()
 
@@ -30,10 +30,21 @@ try:
 except OSError:
     pass
 
+
+def truncation( fixed_noise):
+    for i in range(len(fixed_noise)):
+         v = fixed_noise[i]
+         while abs(v)>2:
+             v= torch.randn(1)
+         fixed_noise[i] = v
+    return fixed_noise
+
 #---------------generate images
 def generate_img(model):
     for i in range(2):
-        input_noise = torch.FloatTensor(opt.batchsize, 100, 1, 1).normal_(0,1)
+        input_noise = torch.FloatTensor(opt.batchsize*100).normal_(0,1)
+        input_noise = truncation(input_noise)
+        input_noise = input_noise.resize_(opt.batchsize, 100, 1, 1)
         input_noise = input_noise.cuda()
         input_noise = Variable(input_noise)
         outputs = model(input_noise)
