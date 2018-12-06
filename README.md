@@ -27,7 +27,7 @@ mkdir result
 
 ### Train
 ```
-python train.py --dataset market --dataroot /home/zzd/market1501/train_pytorch  --name baseline-lsgan8x8-encode --lsgan --gpu_ids 3
+python train.py --dataset market --dataroot /home/zzd/market1501/train_pytorch  --withoutE --name baseline-lsgan8x8-encode --lsgan --gpu_ids 3
 ```
 
 `--name` the name of the output model
