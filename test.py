@@ -41,7 +41,7 @@ def truncation( fixed_noise):
 
 #---------------generate images
 def generate_img(model):
-    for i in range(2):
+    for i in range(200):
         input_noise = torch.FloatTensor(opt.batchsize*100).normal_(0,1)
         input_noise = truncation(input_noise)
         input_noise = input_noise.resize_(opt.batchsize, 100, 1, 1)
