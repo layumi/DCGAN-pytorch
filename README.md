@@ -17,7 +17,7 @@ python setup.py install
 ```
 Because pytorch and torchvision are ongoing projects.
 
-Here we noted that our code is tested based on Pytorch 0.3.0 and Torchvision 0.2.0.
+Here we noted that our code is tested based on Pytorch 1.0.0 and Torchvision 0.2.0.
 
 ```
 mkdir model
@@ -27,7 +27,7 @@ mkdir result
 
 ### Train
 ```
-python train.py --dataset market --dataroot /home/zzd/market1501/train_pytorch  --withoutE --name baseline-lsgan8x8-encode --lsgan --gpu_ids 3
+python train.py --dataset market --dataroot /home/zzd/market1501/pytorch/train_all  --withoutE --name baseline-lsgan8x8-encode --lsgan --gpu_ids 3
 ```
 
 `--name` the name of the output model
